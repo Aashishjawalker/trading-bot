@@ -75,30 +75,40 @@ class TerminalSession:
         fl = fcntl.fcntl(fd, fcntl.F_GETFL)
         fcntl.fcntl(fd, fcntl.F_SETFL, fl | _os.O_NONBLOCK)
 
-        # Wait for initial menu to print
-        time.sleep(0.5)
+        # Wait for child to start and print the menu
+        time.sleep(0.8)
+
+        # Buffer initial output for first frontend poll
+        data = self._read_available()
+        self.output_buffer = data
+
+    def _read_available(self, max_bytes=65536):
+        """Read any available data from the PTY fd. Raises BlockingIOError if none, returns bytes."""
+        import os as _os
+        total = b""
+        try:
+            while len(total) < max_bytes:
+                data = _os.read(self.fd, 4096)
+                if not data:
+                    break
+                total += data
+        except BlockingIOError:
+            pass
+        except OSError:
+            self.running = False
+        return total
 
     def read_output(self):
         """Return (output_bytes, still_running_bool)."""
         if not self.running or self.fd is None:
             return self.output_buffer, False
 
-        import os as _os
-        out = b""
-        try:
-            while True:
-                data = _os.read(self.fd, 4096)
-                if not data:
-                    break
-                out += data
-        except BlockingIOError:
-            pass
-        except OSError:
-            self.running = False
+        out = self._read_available()
 
         # Check child status
         if self.running:
             try:
+                import os as _os
                 wpid, _ = _os.waitpid(self.child_pid, _os.WNOHANG)
                 if wpid:
                     self.running = False
