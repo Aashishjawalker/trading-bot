@@ -48,101 +48,89 @@ _TERMINAL_LOCK = threading.Lock()
 
 
 class TerminalSession:
-    """Runs cli.py in a PTY so interactive I/O works via the web."""
+    """Runs cli.py with subprocess pipes — works reliably on HF Spaces."""
 
     def __init__(self):
-        self.fd = None
-        self.child_pid = None
+        self.proc = None
         self.running = False
         self.output_buffer = b""
+        self._lock = threading.Lock()
 
     def start(self):
         import subprocess
-        import pty
-        import fcntl
-
-        master_fd, slave_fd = pty.openpty()
 
         proc = subprocess.Popen(
-            [sys.executable, str(BASE / "cli.py")],
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            close_fds=True,
-            preexec_fn=os.setsid,
+            [sys.executable, "-u", str(BASE / "cli.py")],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
         )
-        os.close(slave_fd)
-
-        self.child_pid = proc.pid
-        self.fd = master_fd
+        self.proc = proc
         self.running = True
 
-        # Non-blocking reads on master
-        fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
-        fcntl.fcntl(master_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+        # Reader thread continuously drains stdout
+        def reader():
+            try:
+                while True:
+                    data = proc.stdout.read(4096)
+                    if not data:
+                        break
+                    with self._lock:
+                        self.output_buffer += data
+            except (OSError, ValueError):
+                pass
+            finally:
+                self.running = False
+
+        import threading as _th
+        t = _th.Thread(target=reader, daemon=True)
+        t.start()
 
         # Give cli.py a moment to print the initial menu
         import time
-        time.sleep(0.8)
-        try:
-            while True:
-                data = os.read(master_fd, 4096)
-                if not data:
-                    break
-                self.output_buffer += data
-        except (BlockingIOError, OSError):
-            pass
+        time.sleep(1.0)
 
     def read_output(self):
         """Return (output_bytes, still_running_bool). Includes accumulated buffer."""
-        if not self.running or self.fd is None:
-            buf = self.output_buffer
-            self.output_buffer = b""
-            return buf, False
+        if not self.running or self.proc is None:
+            with self._lock:
+                buf = self.output_buffer
+                self.output_buffer = b""
+            return buf, self.running if self.proc else False
 
-        out = b""
-        try:
-            while True:
-                data = os.read(self.fd, 4096)
-                if not data:
-                    self.running = False
-                    break
-                out += data
-        except BlockingIOError:
-            pass
-        except OSError:
+        # Check if process died
+        if self.proc.poll() is not None:
             self.running = False
 
-        # Return accumulated buffer + new data
-        result = self.output_buffer + out
-        self.output_buffer = b""
+        with self._lock:
+            result = self.output_buffer
+            self.output_buffer = b""
         return result, self.running
 
     def write(self, data: bytes):
-        if self.fd is not None and self.running:
-            os.write(self.fd, data)
+        if self.proc is not None and self.running and self.proc.stdin:
+            try:
+                # Convert \r (from browser Enter key) to \n for Python input()
+                data = data.replace(b"\r", b"\n")
+                self.proc.stdin.write(data)
+                self.proc.stdin.flush()
+            except OSError:
+                self.running = False
 
     def resize(self, rows: int, cols: int):
-        if self.fd is not None:
-            winsize = struct.pack("HHHH", rows, cols, 0, 0)
-            try:
-                import fcntl, termios
-                fcntl.ioctl(self.fd, termios.TIOCSWINSZ, winsize)
-            except (ImportError, OSError):
-                pass
+        pass  # No PTY — no resize needed
 
     def stop(self):
         self.running = False
-        if self.child_pid:
+        if self.proc:
             try:
-                os.kill(self.child_pid, signal.SIGTERM)
-            except OSError:
-                pass
-        if self.fd is not None:
-            try:
-                os.close(self.fd)
-            except OSError:
-                pass
+                self.proc.terminate()
+                self.proc.wait(timeout=3)
+            except Exception:
+                self.proc.kill()
+                self.proc.wait(timeout=2)
+            self.proc = None
 
 
 def get_or_create_terminal():
@@ -457,9 +445,13 @@ class Handler(BaseHTTPRequestHandler):
     sendResize();
   });
 
-  // Input: capture keystrokes and send raw
+  // Input: capture keystrokes and echo locally
   term.onData(function(data) {
-    buffer += data;
+    // Echo the character locally if it's printable (not escape sequences)
+    if (data.length === 1 && data.charCodeAt(0) >= 32) {
+      term.write(data);
+    }
+    // Send to server
     fetch('/api/terminal/input', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
