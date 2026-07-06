@@ -310,6 +310,18 @@ class Handler(BaseHTTPRequestHandler):
             info["subprocess_rc"] = r.returncode
         except Exception as e:
             info["subprocess_error"] = str(e)
+        # Test running cli.py directly
+        try:
+            r = _sp.run(
+                [sys.executable, "-u", str(BASE / "cli.py")],
+                capture_output=True, text=True, timeout=5,
+                env={**os.environ},
+            )
+            info["cli_stdout"] = r.stdout[:500]
+            info["cli_stderr"] = r.stderr[:500]
+            info["cli_rc"] = r.returncode
+        except Exception as e:
+            info["cli_error"] = str(e)
         # Check if /app/cli.py exists
         from pathlib import Path
         info["cli_exists"] = (BASE / "cli.py").exists()
