@@ -94,16 +94,17 @@ class TerminalSession:
             pass
 
     def read_output(self):
-        """Return (output_bytes, still_running_bool)."""
+        """Return (output_bytes, still_running_bool). Includes accumulated buffer."""
         if not self.running or self.fd is None:
-            return b"", False
+            buf = self.output_buffer
+            self.output_buffer = b""
+            return buf, False
 
         out = b""
         try:
             while True:
                 data = os.read(self.fd, 4096)
                 if not data:
-                    # EOF — child closed its end
                     self.running = False
                     break
                 out += data
@@ -112,8 +113,10 @@ class TerminalSession:
         except OSError:
             self.running = False
 
-        self.output_buffer += out
-        return out, self.running
+        # Return accumulated buffer + new data
+        result = self.output_buffer + out
+        self.output_buffer = b""
+        return result, self.running
 
     def write(self, data: bytes):
         if self.fd is not None and self.running:
