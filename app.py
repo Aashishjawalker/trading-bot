@@ -60,25 +60,36 @@ class TerminalSession:
         import subprocess
 
         proc = subprocess.Popen(
-            [sys.executable, "-u", "-c", "import sys; sys.stdout.write('READY\\n'); sys.stdout.flush(); import cli; cli.main()"],
+            [sys.executable, "-u", str(BASE / "cli.py")],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            bufsize=0,
         )
         self.proc = proc
         self.running = True
 
-        # Reader thread continuously drains stdout
+        # Reader thread: read from raw fd to avoid BufferedReader buffering
+        fd = proc.stdout.fileno()
+        import fcntl
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
         def reader():
             try:
                 while True:
-                    data = proc.stdout.read(4096)
-                    if not data:
+                    try:
+                        data = os.read(fd, 4096)
+                        if not data:
+                            break
+                        with self._lock:
+                            self.output_buffer += data
+                    except BlockingIOError:
+                        # No data right now — sleep briefly then retry
+                        import time
+                        time.sleep(0.05)
+                    except OSError:
                         break
-                    with self._lock:
-                        self.output_buffer += data
-            except (OSError, ValueError):
+            except Exception:
                 pass
             finally:
                 self.running = False
