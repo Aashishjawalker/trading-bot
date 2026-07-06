@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Trading Bot — Terminal</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f172a;color:#e2e8f0;font-family:-apple-system,sans-serif}
+#toolbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 16px;background:#1e293b;border-bottom:1px solid #334155
+}
+#toolbar h3{font-size:14px;font-weight:600;color:#94a3b8}
+#toolbar a{color:#3b82f6;text-decoration:none;font-size:13px}
+#toolbar button{
+  background:#334155;border:none;color:#e2e8f0;padding:4px 12px;
+  border-radius:6px;cursor:pointer;font-size:12px;margin-left:12px
+}
+#toolbar button:hover{background:#475569}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.alive{background:#22c55e}.dead{background:#ef4444}
+#terminal-container{height:calc(100vh - 45px);padding:8px}
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <div><span class="status-dot alive" id="status-dot"></span><h3 style="display:inline">Terminal — Binance Futures CLI</h3></div>
+  <div><a href="/">← Back</a><button onclick="restartTerm()">Restart</button></div>
+</div>
+<div id="terminal-container"><div id="terminal"></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script>
+(function(){
+  const term = new Terminal({
+    cursorBlink:true,cursorStyle:'block',fontSize:14,
+    fontFamily:'Menlo,Monaco,"Courier New",monospace',
+    theme:{background:'#0f172a',foreground:'#e2e8f0',cursor:'#e2e8f0',selectionBackground:'#334155',
+      black:'#0f172a',red:'#ef4444',green:'#22c55e',yellow:'#eab308',blue:'#3b82f6',
+      magenta:'#a855f7',cyan:'#06b6d4',white:'#e2e8f0',brightBlack:'#475569',
+      brightRed:'#f87171',brightGreen:'#4ade80',brightYellow:'#facc15',brightBlue:'#60a5fa',
+      brightMagenta:'#c084fc',brightCyan:'#22d3ee',brightWhite:'#f8fafc'}
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById('terminal'));
+  fit.fit();
+  new ResizeObserver(()=>fit.fit()).observe(document.getElementById('terminal-container'));
+
+  let line='', pollTimer, statusDot=document.getElementById('status-dot');
+
+  function sendResize(){
+    const d=fit.proposeDimensions();
+    if(!d)return;
+    fetch('/api/terminal/resize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:d.rows,cols:d.cols})});
+  }
+  window.addEventListener('resize',sendResize);
+  sendResize();
+
+  term.onKey(function(e){
+    const ev=e.domEvent;
+    if(ev.keyCode===13){
+      term.write('\r\n');
+      fetch('/api/terminal/input',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:line+'\n'})}).catch(()=>{});
+      line='';
+    }else if(ev.keyCode===8||ev.keyCode===127){
+      if(line.length){line=line.slice(0,-1);term.write('\b \b');}
+    }else if(e.key.length===1&&e.key.charCodeAt(0)>=32){
+      line+=e.key;term.write(e.key);
+    }
+  });
+
+  function poll(){
+    fetch('/api/terminal/output').then(r=>r.json()).then(d=>{
+      if(d.output)term.write(d.output);
+      statusDot.className='status-dot '+(d.running?'alive':'dead');
+      pollTimer=setTimeout(poll,200);
+    }).catch(()=>{pollTimer=setTimeout(poll,2000);});
+  }
+  poll();
+})();
+
+function restartTerm(){
+  fetch('/api/terminal/restart',{method:'POST'}).then(()=>{
+    document.querySelector('.status-dot').className='status-dot alive';
+  });
+}
+</script>
+</body>
+</html>
