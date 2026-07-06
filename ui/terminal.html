@@ -80,12 +80,24 @@ body{background:#0f172a;color:#e2e8f0;font-family:-apple-system,sans-serif}
       pollTimer=setTimeout(poll,200);
     }).catch(()=>{pollTimer=setTimeout(poll,2000);});
   }
+
+  // Grab full output history on page load (in case terminal already running)
+  fetch('/api/terminal/history').then(r=>r.json()).then(d=>{
+    if(d.output)term.write(d.output);
+    statusDot.className='status-dot '+(d.running?'alive':'dead');
+  });
   poll();
 })();
 
 function restartTerm(){
   fetch('/api/terminal/restart',{method:'POST'}).then(()=>{
     document.querySelector('.status-dot').className='status-dot alive';
+    // Re-pull full history after restart
+    setTimeout(function(){
+      fetch('/api/terminal/history').then(r=>r.json()).then(d=>{
+        if(d.output)term.write(d.output);
+      });
+    }, 500);
   });
 }
 </script>

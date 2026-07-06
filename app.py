@@ -41,6 +41,7 @@ class TerminalSession:
         self.proc = None
         self.running = False
         self._buf = b""
+        self._log = b""  # full output log (never cleared)
         self._read_thread = None
         self._lock = threading.Lock()
 
@@ -119,7 +120,6 @@ class TerminalSession:
             if IS_WIN:
                 ret = self.proc.poll()
                 if ret is not None:
-                    # Final flush of any remaining buffered output
                     with self._lock:
                         if self._buf:
                             out += self._read()
@@ -134,7 +134,11 @@ class TerminalSession:
                     pass
         result = self._buf + out
         self._buf = b""
+        self._log += result
         return result.decode("utf-8", errors="replace"), self.running
+
+    def get_history(self):
+        return self._log.decode("utf-8", errors="replace")
 
     def write(self, data: bytes):
         if not self.running:
@@ -243,6 +247,9 @@ class Handler(BaseHTTPRequestHandler):
                 session = _get_term()
                 text, running = session.read_output()
                 self._json({"output": text, "running": running})
+            elif path == "/api/terminal/history":
+                session = _get_term()
+                self._json({"output": session.get_history(), "running": session.running})
             elif path == "/api/terminal/status":
                 with _term_lock:
                     running = _term is not None and _term.running
