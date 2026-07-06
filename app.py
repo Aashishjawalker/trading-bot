@@ -57,22 +57,41 @@ class TerminalSession:
         self.output_buffer = b""
 
     def start(self):
+        import subprocess
         import pty
+        import fcntl
 
-        pid, fd = pty.fork()
-        if pid == 0:
-            # Child — exec the CLI
-            os.execvp(sys.executable, [sys.executable, str(BASE / "cli.py")])
-            os._exit(1)
+        master_fd, slave_fd = pty.openpty()
 
-        self.child_pid = pid
-        self.fd = fd
+        proc = subprocess.Popen(
+            [sys.executable, str(BASE / "cli.py")],
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            close_fds=True,
+            preexec_fn=os.setsid,
+        )
+        os.close(slave_fd)
+
+        self.child_pid = proc.pid
+        self.fd = master_fd
         self.running = True
 
-        # Non-blocking reads
-        import fcntl
-        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+        # Non-blocking reads on master
+        fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+        fcntl.fcntl(master_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+        # Give cli.py a moment to print the initial menu
+        import time
+        time.sleep(0.8)
+        try:
+            while True:
+                data = os.read(master_fd, 4096)
+                if not data:
+                    break
+                self.output_buffer += data
+        except (BlockingIOError, OSError):
+            pass
 
     def read_output(self):
         """Return (output_bytes, still_running_bool)."""
@@ -84,21 +103,14 @@ class TerminalSession:
             while True:
                 data = os.read(self.fd, 4096)
                 if not data:
+                    # EOF — child closed its end
+                    self.running = False
                     break
                 out += data
         except BlockingIOError:
             pass
         except OSError:
             self.running = False
-
-        # Check if child is still alive
-        if self.running:
-            try:
-                pid, status = os.waitpid(self.child_pid, os.WNOHANG)
-                if pid != 0:
-                    self.running = False
-            except OSError:
-                self.running = False
 
         self.output_buffer += out
         return out, self.running
