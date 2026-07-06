@@ -64,30 +64,23 @@ class TerminalSession:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            close_fds=True,
+            env=os.environ,
         )
         self.proc = proc
         self.running = True
 
-        # Reader thread: read from raw fd to avoid BufferedReader buffering
-        fd = proc.stdout.fileno()
-        import fcntl
-        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-
+        # Reader thread: read1 to bypass BufferedReader internal buffer
         def reader():
             try:
                 while True:
                     try:
-                        data = os.read(fd, 4096)
+                        data = proc.stdout.read1(4096)
                         if not data:
                             break
                         with self._lock:
                             self.output_buffer += data
-                    except BlockingIOError:
-                        # No data right now — sleep briefly then retry
-                        import time
-                        time.sleep(0.05)
-                    except OSError:
+                    except (OSError, ValueError):
                         break
             except Exception:
                 pass
