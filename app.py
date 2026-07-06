@@ -62,7 +62,7 @@ class TerminalSession:
         pid, fd = _pty.fork()
         if pid == 0:  # child
             import os as _os
-            _os.execvp(str(BASE / "cli.py"), [sys.executable, "-u", str(BASE / "cli.py")])
+            _os.execvp(sys.executable, [sys.executable, "-u", str(BASE / "cli.py")])
             _os._exit(1)
 
         # parent
@@ -259,8 +259,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"orders": get_order_history(client, symbol) if client else []})
             elif path == "/api/open_orders":
                 self._json({"orders": get_open_orders(client) if client else []})
-            elif path == "/api/dbg":
-                self._json(self._debug())
             elif path == "/api/terminal/output":
                 self._handle_terminal_output()
             elif path == "/api/terminal/status":
