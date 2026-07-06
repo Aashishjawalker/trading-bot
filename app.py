@@ -60,7 +60,7 @@ class TerminalSession:
         import subprocess
 
         proc = subprocess.Popen(
-            [sys.executable, "-u", str(BASE / "cli.py")],
+            [sys.executable, "-u", "-c", "import sys; sys.stdout.write('READY\\n'); sys.stdout.flush(); import cli; cli.main()"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
