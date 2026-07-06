@@ -139,9 +139,6 @@ def get_or_create_terminal():
         if _TERMINAL_SESSION is None or not _TERMINAL_SESSION.running:
             _TERMINAL_SESSION = TerminalSession()
             _TERMINAL_SESSION.start()
-        else:
-            # Drain new output so it's available for the next poll
-            _TERMINAL_SESSION.read_output()
         return _TERMINAL_SESSION
 
 
@@ -254,8 +251,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"orders": get_order_history(client, symbol) if client else []})
             elif path == "/api/open_orders":
                 self._json({"orders": get_open_orders(client) if client else []})
-            elif path == "/api/debug":
-                self._json(self._debug())
             elif path == "/api/terminal/output":
                 self._handle_terminal_output()
             elif path == "/api/terminal/status":
@@ -289,44 +284,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json({"error": str(e)}, 400)
 
-    # ── Debug ───────────────────────────────────────────────────────
-
-    @staticmethod
-    def _debug():
-        import subprocess as _sp
-        info = {
-            "api_key_set": bool(os.environ.get("BINANCE_TESTNET_API_KEY", "")),
-            "api_secret_set": bool(os.environ.get("BINANCE_TESTNET_API_SECRET", "")),
-            "client_exists": client is not None,
-        }
-        # Test running a quick Python subprocess
-        try:
-            r = _sp.run(
-                [sys.executable, "-u", "-c", "print('hello from subprocess'); import os; print('key_set:', bool(os.environ.get('BINANCE_TESTNET_API_KEY','')))"],
-                capture_output=True, text=True, timeout=5,
-                env={**os.environ},
-            )
-            info["subprocess_test"] = r.stdout + r.stderr
-            info["subprocess_rc"] = r.returncode
-        except Exception as e:
-            info["subprocess_error"] = str(e)
-        # Test running cli.py directly
-        try:
-            r = _sp.run(
-                [sys.executable, "-u", str(BASE / "cli.py")],
-                capture_output=True, text=True, timeout=5,
-                env={**os.environ},
-            )
-            info["cli_stdout"] = r.stdout[:500]
-            info["cli_stderr"] = r.stderr[:500]
-            info["cli_rc"] = r.returncode
-        except Exception as e:
-            info["cli_error"] = str(e)
-        # Check if /app/cli.py exists
-        from pathlib import Path
-        info["cli_exists"] = (BASE / "cli.py").exists()
-        info["cwd"] = str(Path.cwd())
-        return info
+    # ── Trading API ──────────────────────────────────────────────────
 
     def _place(self, body):
         params = {
