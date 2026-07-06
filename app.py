@@ -251,6 +251,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"orders": get_order_history(client, symbol) if client else []})
             elif path == "/api/open_orders":
                 self._json({"orders": get_open_orders(client) if client else []})
+            elif path == "/api/dbg":
+                self._json(self._debug())
             elif path == "/api/terminal/output":
                 self._handle_terminal_output()
             elif path == "/api/terminal/status":
@@ -549,6 +551,21 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode("utf-8"))
+
+    def _debug(self):
+        info = {}
+        with _TERMINAL_LOCK:
+            sess = _TERMINAL_SESSION
+            info["exists"] = sess is not None
+            if sess:
+                info["running"] = sess.running
+                info["proc"] = sess.proc is not None
+                if sess.proc:
+                    info["poll"] = sess.proc.poll()
+                info["buf"] = len(sess.output_buffer)
+                import threading
+                info["threads"] = [t.name for t in threading.enumerate() if "reader" in t.name.lower() or "Thread" in t.name]
+        return info
 
     def log_message(self, fmt, *args):
         pass  # quieter logs for HF Spaces
