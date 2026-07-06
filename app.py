@@ -442,18 +442,34 @@ class Handler(BaseHTTPRequestHandler):
     sendResize();
   });
 
-  // Input: capture keystrokes and echo locally
-  term.onData(function(data) {
-    // Echo the character locally if it's printable (not escape sequences)
-    if (data.length === 1 && data.charCodeAt(0) >= 32) {
-      term.write(data);
+  // Input: local line buffering with proper backspace support
+  let lineBuffer = '';
+  let cursorPos = 0;
+
+  term.onKey(function(e) {
+    const ev = e.domEvent;
+    const char = e.key;
+
+    if (ev.keyCode === 13) { // Enter
+      term.write('\r\n');
+      fetch('/api/terminal/input', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({data: lineBuffer + '\n'}),
+      }).catch(function(){});
+      lineBuffer = '';
+      cursorPos = 0;
+    } else if (ev.keyCode === 8 || ev.keyCode === 127) { // Backspace
+      if (cursorPos > 0) {
+        lineBuffer = lineBuffer.slice(0, -1);
+        cursorPos--;
+        term.write('\b \b');
+      }
+    } else if (char.length === 1 && char.charCodeAt(0) >= 32) { // Printable
+      lineBuffer += char;
+      cursorPos++;
+      term.write(char);
     }
-    // Send to server
-    fetch('/api/terminal/input', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({data: data}),
-    }).catch(function(){});
   });
 
   // Poll output from server
